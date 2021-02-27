@@ -18,7 +18,7 @@ def export_tiktoks(client: TelegramClient, channel: Channel) -> None:
 
         user_id = message.sender.id
 
-        if message.text.startswith('https://vm.tiktok'):
+        if 'vm.tiktok.com' in message.text:
             count_tiktoks += 1
 
             save_sent_tiktok(user_id, message.id, message.date, message.text)
@@ -50,10 +50,11 @@ with TelegramClient('tg_session', os.environ['TG_API_ID'], os.environ['TG_API_HA
                     'gen': 'm',
                     'last_replied_tiktok_id': None,
                     'last_replied_at': None,
-                    'tiktoks_sent_count': 0,
                     'tiktoks_replied_count': 0
                 }
             )
+
+    db.tiktoks.delete_many({})
 
     full_channel = client(GetFullChannelRequest(temptok_dialog.entity)).full_chat
 

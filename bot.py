@@ -1,14 +1,23 @@
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from security import known_user
+from typing import Optional
+from tiktok_utils import milliseconds_to_string_duration
 
-from telegram.ext import (CallbackContext, CallbackQueryHandler,
-                          CommandHandler, Filters, MessageHandler, Updater)
+import pymorphy2
+import telegram
+from telegram.ext import (CallbackContext, CommandHandler, Filters,
+                          MessageHandler, Updater)
 from telegram.update import Update
 
-from db import (STRICT_MODE_START_FROM, db, get_last_not_answered_tiktok,
-                get_overall_tiktok_stats, save_sent_tiktok,
+from db import (db, get_income_replies_stats, get_last_not_answered_tiktok,
+                get_outcome_replies_tiktoks_stats, get_sent_tiktoks_stats,
+                get_top_most_popular_reactions, save_sent_tiktok,
                 save_tiktok_reply_if_applicable)
+
+morph = pymorphy2.MorphAnalyzer()
+
 
 updater = Updater(token=os.environ['BOT_TOKEN'])
 
@@ -16,9 +25,8 @@ dispatcher = updater.dispatcher
 
 COMMANDS = [
     ('start', 'посмотреть инструкцию'),
-    ('stats', 'посмотреть статистику по тиктокам'),
+    ('stats', 'посмотреть статистику по тиктокам (есть аргументы /stats "Имя" "DD.MM.YYY")'),
     ('watch', 'получить самый ранний неотвеченный тикток'),
-    ('fails', 'статистика фейлов / задокументировать фейл'),
 ]
 
 success = updater.bot.set_my_commands(COMMANDS)
@@ -27,22 +35,14 @@ if not success:
     raise ValueError('Error settings commands')
 
 
-def tiktok_handler(update: Update, context: CallbackContext) -> None:
+@known_user
+def tiktok_handler(user: dict, update: Update, context: CallbackContext) -> None:
     message = update.effective_message
-    user_id = update.effective_user.id
     chat_id = update.effective_chat.id
 
-    known_user = db.users.find_one({'user_id': user_id})
+    save_sent_tiktok(user['user_id'], message.message_id, message.date, message.text)
 
-    if not known_user:
-        context.bot.send_message(
-            chat_id=chat_id,
-            text='А мы знакомы? Почему ты кидаешь мне тиктоки, я тебя не знаю...'
-        )
-
-    save_sent_tiktok(user_id, message.message_id, message.date, message.text)
-
-    not_answered_tiktok = get_last_not_answered_tiktok(user_id, offset_from_now=timedelta(hours=1))
+    not_answered_tiktok = get_last_not_answered_tiktok(user['user_id'], offset_from_now=timedelta(hours=1))
 
     if not_answered_tiktok:
         context.bot.send_message(
@@ -64,17 +64,18 @@ def tiktok_handler(update: Update, context: CallbackContext) -> None:
     # TODO: check milestones — every 10th tiktok in a day, every 100th tiktok overall
 
 
-def reply_handler(update: Update, context: CallbackContext) -> None:
+@known_user
+def reply_handler(user: dict, update: Update, context: CallbackContext) -> None:
     message = update.effective_message
-    user_id = update.effective_user.id
 
     save_tiktok_reply_if_applicable(
-        user_id, message.reply_to_message.message_id,
+        user['user_id'], message.reply_to_message.message_id,
         message.message_id, message.date, message.text
     )
 
 
-def start(update: Update, context: CallbackContext) -> None:
+@known_user
+def start(user: dict, update: Update, context: CallbackContext) -> None:
     commands_info = '\n\n'.join(
         [f'/{command} — {description}' for command, description in COMMANDS]
     )
@@ -83,44 +84,148 @@ def start(update: Update, context: CallbackContext) -> None:
         chat_id=update.effective_chat.id,
         text=(
             'Привет!\n\n'
-            "Я буду помогать соблюдать некоторые правила #temptok'ского клуба. "
+            "Я буду помогать соблюдать некоторые правила temptok'ского клуба. "
             'Какие конкретно правила — станет ясно в момент их нарушения.\n\n'
-            'Единственное, чтобы я лишний раз на тебя не наговаривал, отвечайте, пожалуйста, на '
+            'Единственное, чтобы я лишний раз на тебя не наговаривал, отвечай, пожалуйста, на '
             'все тиктоки через реплаи, а не просто сообщением.\n\n'
             f'Что еще:\n\n{commands_info}'
         )
     )
 
 
-def stats(update: Update, context: CallbackContext) -> None:
-    # args "/stats Сережа"  — самые частые ответы сережи
+@known_user
+def stats(user: dict, update: Update, context: CallbackContext) -> None:
+    all_users = list(db.users.find({}).sort('name', 1))
 
-    # ! Overall stats
-    get_overall_tiktok_stats(STRICT_MODE_START_FROM)
+    for_user_id = None
+    start_date = None
 
-    # ! Person stats
-    # 1. Received tiktoks vs. answered tiktoks
-    # 2. Whose tiktoks answer as in 1
-    # 3. Top most popular reactions
+    if args := context.args:
+        for arg in args[:2]:
+            # Try parse user
+            found_user = None
 
-    ...
+            try:
+                found_user = next(u for u in all_users if u['name'] == arg)
+                for_user_id = found_user['user_id']
+                continue
+            except StopIteration:
+                pass
+
+            # Or try parse date
+            try:
+                start_date = datetime.strptime(arg, "%d.%m.%Y").replace(tzinfo=timezone.utc)
+            except ValueError:
+                pass
+
+    if for_user_id:
+        text = form_stats_for_person(for_user_id, all_users, start_date)
+    else:
+        text = form_stats_summary(all_users, start_date)
+
+    context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=text,
+        parse_mode=telegram.ParseMode.HTML
+    )
 
 
-def fails(update: Update, context: CallbackContext) -> None:
-    # статистика по фейлам, fails_count + добавить фейл (а там "Кто зафейлился?")
-    ...
+def form_stats_summary(users: list, start_date: Optional[datetime]) -> str:
+    tiktok_morph = morph.parse('тикток')[0]
+
+    sent_stats = get_sent_tiktoks_stats(start_date)
+    outcome_replies_stats = get_outcome_replies_tiktoks_stats(start_date)
+    income_replies_stats = get_income_replies_stats(start_date)
+
+    text = ''
+
+    for user in users:
+        user_sent_stats = sent_stats.get(user['user_id'])
+        user_outcome_replies_stats = outcome_replies_stats.get(user['user_id'])
+        user_income_replies_stats = income_replies_stats.get(user['user_id'])
+
+        text += f"<b>{user['name']}</b>\n"
+
+        if user_sent_stats and user_sent_stats['sent_count']:
+            tiktoks_word = tiktok_morph.make_agree_with_number(user_sent_stats['sent_count']).word
+            got_answers_percent = round(user_sent_stats['got_replies_count'] / user_sent_stats['sent_count'] * 100)
+
+            text += (
+                f"Отправил{'a' if user['gen'] == 'f' else ''} "
+                f"<code>{user_sent_stats['sent_count']}</code> {tiktoks_word} "
+                f"и получил{'a' if user['gen'] == 'f' else ''} ответ на "
+                f"<code>{user_sent_stats['got_replies_count']}</code> из них ({got_answers_percent}%). "
+            )
+
+            if user_income_replies_stats:
+                text += (
+                    f"AVG получает ответ за "
+                    f"{milliseconds_to_string_duration(user_income_replies_stats['avg_income_reply_time'])}, "
+                    f"AVG длина получаемого ахаха — "
+                    f"{round(user_income_replies_stats['avg_income_laugh_indicator'], 1)}"
+                )
+
+        else:
+            text += f"Не отправлял{'a' if user['gen'] == 'f' else ''} тиктоков за период :("
+
+        text += '\n\n'
+
+        others_sent_count = sum([v['sent_count'] for k, v in sent_stats.items() if k != user['user_id']])
+
+        if others_sent_count:
+            replied_count = 0
+
+            if user_outcome_replies_stats:
+                replied_count = user_outcome_replies_stats['replied_count']
+
+            tiktoks_word = tiktok_morph.make_agree_with_number(others_sent_count).word
+
+            text += (
+                f"Ответил{'a' if user['gen'] == 'f' else ''} "
+                f"на <code>{replied_count}</code> "
+                f"из <code>{others_sent_count}</code> {tiktoks_word}, которые "
+                f"получил{'a' if user['gen'] == 'f' else ''}. "
+            )
+
+            if user_outcome_replies_stats:
+                text += (
+                    f"AVG отвечает за "
+                    f"{milliseconds_to_string_duration(user_outcome_replies_stats['avg_outcome_reply_time'])}, "
+                    f"AVG длина ахаха в ответе — "
+                    f"{round(user_outcome_replies_stats['avg_outcome_laugh_indicator'], 1)}"
+                )
+        else:
+            text += f"А отвечать {'ей' if user['gen'] == 'f' else 'ему'} некому — нет тиктоков"
+
+        text += '\n\n'
+
+    return text
 
 
-def watch(update: Update, context: CallbackContext) -> None:
-    user_id = update.effective_user.id
-    chat_id = update.effective_chat.id,
+def form_stats_for_person(user_id: int, users: list, start_date: Optional[datetime]) -> str:
+    text = (
+        'Тут будет статистика чтобы понять кто кому как отвечает, но потом...\n\n'
+    )
 
-    known_user = db.users.find_one({'user_id': user_id})
+    # get_personal_income_stats(user_id, start_date)
+    # get_personal_outcome_stats(user_id, start_date)
 
-    if not known_user:
-        context.bot.send_message(chat_id=chat_id, text='А мы точно знакомы? Кажется я тебя не знаю...')
+    reactions = get_top_most_popular_reactions(user_id, start_date)
 
-    not_answered_tiktok = get_last_not_answered_tiktok(user_id)
+    text += 'Самые частые реакции:\n'
+    if reactions:
+        for i, reaction in enumerate(reactions, start=1):
+            text += f"{i}. {reaction['_id']} ({reaction['frequency']})\n"
+    else:
+        text += 'Нет реакция за период'
+
+    return text
+
+
+@known_user
+def watch(user: dict, update: Update, context: CallbackContext) -> None:
+    chat_id = update.effective_chat.id
+    not_answered_tiktok = get_last_not_answered_tiktok(user['user_id'])
 
     if not_answered_tiktok:
         context.bot.send_message(
@@ -139,8 +244,24 @@ def watch(update: Update, context: CallbackContext) -> None:
         )
 
 
-def callback_handler(update: Update, context: CallbackContext) -> None:
-    ...
+def error_handler(update: Update, context: CallbackContext) -> None:
+    try:
+        raise context.error
+    except Exception as e:
+        try:
+            context.bot.send_message(
+                chat_id=26187519,
+                text=repr(e)[:4000]
+            )
+
+            if not update.callback_query:
+                context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text='💫 Что-то упало... Сережа, почини'
+                )
+
+        except Exception:
+            pass
 
 
 tiktoks_handler = MessageHandler(
@@ -155,10 +276,7 @@ replies_handler = MessageHandler(
 dispatcher.add_handler(CommandHandler('start', start))
 dispatcher.add_handler(CommandHandler('stats', stats))
 dispatcher.add_handler(CommandHandler('watch', watch))
-dispatcher.add_handler(CommandHandler('fails', watch))
 dispatcher.add_handler(tiktoks_handler)
 dispatcher.add_handler(replies_handler)
-dispatcher.add_handler(CallbackQueryHandler(callback_handler))
-# TODO: add error handler -> tg
-# TODO: add decorator "Это все конечно интересно, но бот работает только в одной группе"
+dispatcher.add_error_handler(error_handler)
 updater.start_polling()
