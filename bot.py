@@ -5,14 +5,14 @@ from typing import Optional
 
 import pymorphy2
 import telegram
-from telegram.ext import (CallbackContext, CommandHandler, Filters,
-                          MessageHandler, Updater, Defaults)
+from telegram.ext import (CallbackContext, CommandHandler, Defaults, Filters,
+                          MessageHandler, Updater)
 from telegram.update import Update
 
 from db import (db, get_income_replies_stats, get_last_not_answered_tiktok,
                 get_outcome_replies_tiktoks_stats, get_sent_tiktoks_stats,
-                get_top_most_popular_reactions, save_sent_tiktok,
-                save_tiktok_reply_if_applicable)
+                get_today_sent_tiktoks_count, get_top_most_popular_reactions,
+                save_sent_tiktok, save_tiktok_reply_if_applicable)
 from security import known_user
 from tiktok_utils import milliseconds_to_string_duration
 
@@ -61,7 +61,29 @@ def tiktok_handler(user: dict, update: Update, context: CallbackContext) -> None
             message_id=not_answered_tiktok[0]['message_id']
         )
 
-    # TODO: check milestones — every 10th tiktok in a day, every 100th tiktok overall
+    tiktok_morph = morph.parse('тикток')[0]
+    user_sent_tiktoks_count = get_sent_tiktoks_stats().get(user['id'], {}).get('sent_count', -1)
+    today_sent_tiktoks_count = get_today_sent_tiktoks_count(user['id'])
+
+    if user_sent_tiktoks_count % 100 == 0:
+        tiktoks_word = tiktok_morph.make_agree_with_number(user_sent_tiktoks_count).word
+        context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"🥂 {user['name']}, а у тебя юбилей! За все время ты отправил{'a' if user['gen'] == 'f' else ''} "
+                f"уже {user_sent_tiktoks_count} {tiktoks_word}, продолжай в том же духе!"
+            )
+        )
+
+    if today_sent_tiktoks_count % 15 == 0:
+        tiktoks_word = tiktok_morph.make_agree_with_number(today_sent_tiktoks_count).word
+        context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"👍 Вау, вот это контент! За сегодня {user['name']} послал{'a' if user['gen'] == 'f' else ''} уже "
+                f"{today_sent_tiktoks_count} {tiktoks_word}. Предлагаю не останавливаться!"
+            )
+        )
 
 
 @known_user

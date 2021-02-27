@@ -292,6 +292,18 @@ def get_top_most_popular_reactions(user_id: int, start_date: Optional[datetime] 
     return list(db.tiktoks.aggregate(_add_date_filter_if_provided(query, start_date)))
 
 
+def get_today_sent_tiktoks_count(user_id: int) -> int:
+    now = datetime.utcnow()
+    day_beginning = now.replace(hour=0, minute=0, second=1)
+
+    query = {
+        'sent_by_id': user_id,
+        'sent_at': {'$gte': day_beginning},
+    }
+
+    return db.tiktoks.count_documents(query)
+
+
 def _add_date_filter_if_provided(query: list[dict], start_date: Optional[datetime]) -> dict:
     if start_date:
         query.insert(0, {'$match': {'sent_at': {'$gt': start_date}}})
