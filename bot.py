@@ -1,5 +1,6 @@
 
 import os
+import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -7,13 +8,16 @@ import pymorphy2
 import telegram
 from telegram.ext import (CallbackContext, CommandHandler, Defaults, Filters,
                           MessageHandler, Updater)
-from telegram.update import Update
+from telegram.update import Message, Update
 
-from db import (db, get_income_replies_stats, get_last_not_answered_tiktok,
+from db import (STRICT_MODE_START_FROM, db, get_income_replies_stats,
+                get_last_not_answered_tiktok,
                 get_outcome_replies_tiktoks_stats, get_sent_tiktoks_stats,
-                get_today_sent_tiktoks_count, get_top_most_popular_reactions,
-                save_sent_tiktok, save_tiktok_reply_if_applicable)
+                get_tiktoks_with_same_video_id, get_today_sent_tiktoks_count,
+                get_top_most_popular_reactions, save_sent_tiktok,
+                save_tiktok_reply_if_applicable)
 from security import known_user
+from tiktok import EXTRACT_SHARE_URL_FROM_TIKTOK, get_tiktok_id_by_share_url
 from tiktok_utils import milliseconds_to_string_duration
 
 morph = pymorphy2.MorphAnalyzer()
@@ -40,8 +44,69 @@ def tiktok_handler(user: dict, update: Update, context: CallbackContext) -> None
     message = update.effective_message
     chat_id = update.effective_chat.id
 
-    save_sent_tiktok(user['user_id'], message.message_id, message.date, message.text)
+    video_url = context.match.group(1)
+    video_id = None
 
+    try:
+        video_id = get_tiktok_id_by_share_url(video_url)
+    except Exception as e:
+        context.bot.send_message(
+            chat_id=26187519,
+            text=f'Cannot get video_id of tiktok {video_url}\n\n{repr(e)}'
+        )
+
+    saved_tiktok = save_sent_tiktok(
+        user['user_id'], message.message_id,
+        message.date, message.text, video_id
+    )
+    send_has_not_answered_if_applicable(chat_id, message, user, update, context)
+    send_milestones_if_applicable(chat_id, user, update, context)
+    send_is_duplicate_if_applicable(chat_id, saved_tiktok, user, update, context)
+
+
+def send_is_duplicate_if_applicable(chat_id: int, saved_tiktok: dict, user: dict,
+                                    update: Update, context: CallbackContext) -> None:
+    video_id = saved_tiktok['video_id']
+
+    if not video_id:
+        return
+
+    already_sent_tiktoks = get_tiktoks_with_same_video_id(
+        user['user_id'], saved_tiktok
+    )
+
+    if not already_sent_tiktoks:
+        return
+
+    already_sent_tiktok = already_sent_tiktoks[0]
+    sent_user = already_sent_tiktok['user']
+    context.bot.send_message(
+        chat_id=chat_id,
+        text=(
+            '🤔 Хмм... Кажется этот тикток уже присылали. '
+            f"{sent_user['name']} делала{'a' if user['gen'] == 'f' else ''} "
+            f"это {already_sent_tiktok['sent_at'].strftime('%d.%m.%Y')}"
+        )
+    )
+
+    if already_sent_tiktok['sent_at'] > STRICT_MODE_START_FROM:
+        context.bot.forward_message(
+            chat_id=chat_id,
+            from_chat_id=chat_id,
+            message_id=already_sent_tiktok['message_id']
+        )
+    else:
+        context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                'Пруф я переслать не могу, потому что меня тогда еще не было в чате. '
+                'Если нужно, поищите по дате.'
+            )
+        )
+
+
+def send_has_not_answered_if_applicable(chat_id: int, message: Message, user: dict,
+                                        update: Update, context: CallbackContext) -> None:
     not_answered_tiktok = get_last_not_answered_tiktok(user['user_id'], offset_from_now=timedelta(hours=1))
 
     if not_answered_tiktok:
@@ -58,12 +123,15 @@ def tiktok_handler(user: dict, update: Update, context: CallbackContext) -> None
         context.bot.forward_message(
             chat_id=chat_id,
             from_chat_id=chat_id,
-            message_id=not_answered_tiktok[0]['message_id']
+            message_id=not_answered_tiktok['message_id']
         )
 
+
+def send_milestones_if_applicable(chat_id: int, user: dict,
+                                  update: Update, context: CallbackContext) -> None:
     tiktok_morph = morph.parse('тикток')[0]
-    user_sent_tiktoks_count = get_sent_tiktoks_stats().get(user['id'], {}).get('sent_count', -1)
-    today_sent_tiktoks_count = get_today_sent_tiktoks_count(user['id'])
+    user_sent_tiktoks_count = get_sent_tiktoks_stats().get(user['user_id'], {}).get('sent_count', -1)
+    today_sent_tiktoks_count = get_today_sent_tiktoks_count(user['user_id'])
 
     if user_sent_tiktoks_count % 100 == 0:
         tiktoks_word = tiktok_morph.make_agree_with_number(user_sent_tiktoks_count).word
@@ -266,10 +334,11 @@ def error_handler(update: Update, context: CallbackContext) -> None:
     try:
         raise context.error
     except Exception as e:
+        exc_str = traceback.format_exc(e)
         try:
             context.bot.send_message(
                 chat_id=26187519,
-                text=repr(e)[:4000]
+                text=exc_str[:4000]
             )
 
             if not update.callback_query:
@@ -283,7 +352,7 @@ def error_handler(update: Update, context: CallbackContext) -> None:
 
 
 tiktoks_handler = MessageHandler(
-    Filters.text & Filters.regex('.*vm.tiktok.com.*') & ~Filters.update.edited_message,
+    Filters.text & Filters.regex(EXTRACT_SHARE_URL_FROM_TIKTOK) & ~Filters.update.edited_message,
     tiktok_handler
 )
 

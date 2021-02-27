@@ -1,10 +1,12 @@
 import os
+import re
 
 from telethon.sync import TelegramClient
 from telethon.tl.functions.channels import GetFullChannelRequest
 from telethon.tl.types import Channel
 
 from db import db, save_sent_tiktok, save_tiktok_reply_if_applicable
+from tiktok import EXTRACT_SHARE_URL_FROM_TIKTOK, get_tiktok_id_by_share_url
 
 
 def export_tiktoks(client: TelegramClient, channel: Channel) -> None:
@@ -18,10 +20,11 @@ def export_tiktoks(client: TelegramClient, channel: Channel) -> None:
 
         user_id = message.sender.id
 
-        if 'vm.tiktok.com' in message.text:
+        if m := re.match(EXTRACT_SHARE_URL_FROM_TIKTOK, message.text):
             count_tiktoks += 1
 
-            save_sent_tiktok(user_id, message.id, message.date, message.text)
+            video_id = get_tiktok_id_by_share_url(m.group(1))
+            save_sent_tiktok(user_id, message.id, message.date, message.text, video_id)
 
             if count_tiktoks % 100 == 0:
                 print(f'Exported another {count_tiktoks} from group')

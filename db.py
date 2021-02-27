@@ -12,23 +12,31 @@ client = MongoClient(os.environ['MONGO_DB_DSN'])
 db = client.tiktok
 
 
-def form_db_stored_message(user_id: int, message_id: int, message_sent_at: datetime, message_text: str) -> dict:
+def form_db_stored_message(user_id: int, message_id: int, message_sent_at: datetime,
+                           message_text: str, video_id: Optional[str] = None) -> dict:
     return {
         'sent_by_id': user_id,
         'message_id': message_id,
+        'video_id': video_id,
         'sent_at': message_sent_at,
         'text': message_text
     }
 
 
-def save_sent_tiktok(user_id: int, message_id: int, message_sent_at: datetime, message_text: str) -> dict:
-    db.tiktoks.update_one(
+def save_sent_tiktok(user_id: int, message_id: int, message_sent_at: datetime,
+                     message_text: str, video_id: Optional[str]) -> dict:
+    res = db.tiktoks.update_one(
         {'message_id': message_id},
         {
-            '$set': form_db_stored_message(user_id, message_id, message_sent_at, message_text) | {'replies': []},
+            '$set': form_db_stored_message(
+                user_id, message_id, message_sent_at,
+                message_text, video_id
+            ) | {'replies': []},
         },
         upsert=True
     )
+
+    return db.tiktoks.find_one({'_id': res.upserted_id})
 
 
 def save_tiktok_reply_if_applicable(replied_user: dict, replied_to_message_id: int,
@@ -302,6 +310,37 @@ def get_today_sent_tiktoks_count(user_id: int) -> int:
     }
 
     return db.tiktoks.count_documents(query)
+
+
+def get_tiktoks_with_same_video_id(user_id: int, tiktok: dict) -> int:
+    query = [
+        {
+            '$match': {
+                '_id': {'$ne': tiktok['_id']},
+                'video_id': tiktok['video_id']
+            }
+        },
+        {
+            '$lookup': {
+                'from': 'users',
+                'localField': 'sent_by_id',
+                'foreignField': 'user_id',
+                'as': 'users'
+            }
+        },
+        {
+            '$sort': {'sent_at': -1}
+        },
+        {
+            '$project': {
+                'user': {'$arrayElemAt': ["$users", 0]},
+                'message_id': 1,
+                'sent_at': 1
+            }
+        }
+    ]
+
+    return list(db.tiktoks.aggregate(query))
 
 
 def _add_date_filter_if_provided(query: list[dict], start_date: Optional[datetime]) -> dict:
