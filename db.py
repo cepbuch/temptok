@@ -6,7 +6,7 @@ from pymongo import MongoClient
 
 from tiktok_utils import count_laugh_indicator
 
-STRICT_MODE_START_FROM = datetime(2021, 2, 25, 0, 0, 0)
+STRICT_MODE_START_FROM = datetime(2021, 2, 27, 0, 0, 0)
 
 client = MongoClient(os.environ['MONGO_DB_DSN'])
 db = client.tiktok

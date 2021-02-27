@@ -1,31 +1,31 @@
 
 import os
 from datetime import datetime, timedelta, timezone
-from security import known_user
 from typing import Optional
-from tiktok_utils import milliseconds_to_string_duration
 
 import pymorphy2
 import telegram
 from telegram.ext import (CallbackContext, CommandHandler, Filters,
-                          MessageHandler, Updater)
+                          MessageHandler, Updater, Defaults)
 from telegram.update import Update
 
 from db import (db, get_income_replies_stats, get_last_not_answered_tiktok,
                 get_outcome_replies_tiktoks_stats, get_sent_tiktoks_stats,
                 get_top_most_popular_reactions, save_sent_tiktok,
                 save_tiktok_reply_if_applicable)
+from security import known_user
+from tiktok_utils import milliseconds_to_string_duration
 
 morph = pymorphy2.MorphAnalyzer()
 
-
-updater = Updater(token=os.environ['BOT_TOKEN'])
+defaults = Defaults(parse_mode=telegram.ParseMode.HTML)
+updater = Updater(token=os.environ['BOT_TOKEN'], defaults=defaults)
 
 dispatcher = updater.dispatcher
 
 COMMANDS = [
     ('start', 'посмотреть инструкцию'),
-    ('stats', 'посмотреть статистику по тиктокам (есть аргументы /stats "Имя" "DD.MM.YYY")'),
+    ('stats', 'посмотреть статистику по тиктокам (есть аргументы <code>"Имя" "DD.MM.YYY"</code>)'),
     ('watch', 'получить самый ранний неотвеченный тикток'),
 ]
 
@@ -49,7 +49,7 @@ def tiktok_handler(user: dict, update: Update, context: CallbackContext) -> None
             chat_id=chat_id,
             reply_to_message_id=message.message_id,
             text=(
-                f"{known_user['name']}, kind reminder о том, что у тебя есть неотвеченные тиктоки, но "
+                f"{user['name']}, kind reminder о том, что у тебя есть неотвеченные тиктоки, но "
                 'ты присылаешь новые. Ведь те тиктоки ценнее, чем в ленте: за тебя их уже отобрали '
                 'и возможно очень сильно ждут твоей реакции.\n\n'
                 'Вот самый ранний неотвеченный, пожалуйста, начни с него и просмотри внимательно все что поле:'
@@ -125,8 +125,7 @@ def stats(user: dict, update: Update, context: CallbackContext) -> None:
 
     context.bot.send_message(
         chat_id=update.effective_chat.id,
-        text=text,
-        parse_mode=telegram.ParseMode.HTML
+        text=text
     )
 
 
@@ -231,14 +230,13 @@ def watch(user: dict, update: Update, context: CallbackContext) -> None:
         context.bot.send_message(
             chat_id=chat_id,
             text='Here you go!',
-            from_chat_id=chat_id,
-            reply_to_message_id=not_answered_tiktok[0]['message_id']
+            reply_to_message_id=not_answered_tiktok['message_id']
         )
     else:
         context.bot.send_message(
             chat_id=chat_id,
             text=(
-                f"Ты молодец, ты все просмотрел{'a' if known_user['gen'] == 'f' else ''}! "
+                f"Ты молодец, ты все просмотрел{'a' if user['gen'] == 'f' else ''}! "
                 'Можно с чистой совестью идти смотреть новые тиктоки и скидывать друзьям 😊'
             )
         )
