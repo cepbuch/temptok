@@ -8,6 +8,8 @@ from telethon.tl.types import Channel
 from db import db, save_sent_tiktok, save_tiktok_reply_if_applicable
 from tiktok import EXTRACT_SHARE_URL_FROM_TIKTOK, get_tiktok_id_by_share_url
 
+BOT_CHAT_ID = 1535478327
+
 
 def export_tiktoks(client: TelegramClient, channel: Channel) -> None:
     count_tiktoks = 0
@@ -45,6 +47,10 @@ with TelegramClient('tg_session', os.environ['TG_API_ID'], os.environ['TG_API_HA
     participants = client.get_participants(temptok_dialog.entity)
 
     for participant in participants:
+
+        if participant.id == BOT_CHAT_ID:
+            continue
+
         db_user = db.users.find_one({'user_id': participant.id})
 
         if not db_user:

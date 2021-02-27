@@ -196,7 +196,7 @@ def stats(user: dict, update: Update, context: CallbackContext) -> None:
             found_user = None
 
             try:
-                found_user = next(u for u in all_users if u['name'] == arg)
+                found_user = next(u for u in all_users if u['name'] == arg.lower())
                 for_user_id = found_user['user_id']
                 continue
             except StopIteration:
@@ -312,7 +312,19 @@ def form_stats_for_person(user_id: int, users: list, start_date: Optional[dateti
 @known_user
 def watch(user: dict, update: Update, context: CallbackContext) -> None:
     chat_id = update.effective_chat.id
-    not_answered_tiktok = get_last_not_answered_tiktok(user['user_id'])
+
+    all_users = list(db.users.find({}).sort('name', 1))
+
+    watch_user_id = user['user_id']
+
+    if args := context.args:
+        try:
+            found_user = next(u for u in all_users if u['name'] == args[0].lower())
+            watch_user_id = found_user
+        except StopIteration:
+            pass
+
+    not_answered_tiktok = get_last_not_answered_tiktok(watch_user_id)
 
     if not_answered_tiktok:
         context.bot.send_message(

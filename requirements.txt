@@ -3,3 +3,4 @@ pymongo
 dnspython
 telethon
 pymorphy2
+requests

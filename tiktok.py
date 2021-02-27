@@ -3,7 +3,7 @@ from typing import Optional
 
 import requests
 
-EXTRACT_SHARE_URL_FROM_TIKTOK = r'.*(https:\/\/vm.tiktok.com/[^\s^\/]+)'
+EXTRACT_SHARE_URL_FROM_TIKTOK = r'[\s.]*(https:\/\/vm.tiktok.com/[^\s^\/]+).*'
 
 EXTRACT_TIKTOK_ID_FROM_URL = r'https:\/\/m.tiktok.com\/v\/(.*)\.html'
 
