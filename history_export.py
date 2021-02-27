@@ -27,8 +27,10 @@ def export_tiktoks(client: TelegramClient, channel: Channel) -> None:
                 print(f'Exported another {count_tiktoks} from group')
 
         if message.reply_to_msg_id:
+            replied_user = db.users.find_one({'user_id': user_id})
+
             save_tiktok_reply_if_applicable(
-                user_id, message.reply_to_msg_id,
+                replied_user, message.reply_to_msg_id,
                 message.id, message.date, message.text
             )
 

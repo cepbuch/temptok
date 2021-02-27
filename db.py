@@ -31,18 +31,13 @@ def save_sent_tiktok(user_id: int, message_id: int, message_sent_at: datetime, m
     )
 
 
-def save_tiktok_reply_if_applicable(user_id: int, replied_to_message_id: int,
+def save_tiktok_reply_if_applicable(replied_user: dict, replied_to_message_id: int,
                                     message_id: int, message_sent_at: datetime,
                                     message_text: str) -> None:
-    replied_user = db.users.find_one({'user_id': user_id})
-
-    if not replied_user:
-        return
-
     not_yet_replied_tiktok = db.tiktoks.find_one({
         'message_id': replied_to_message_id,
-        'sent_by_user_id': {'$ne': user_id},
-        'replies.user_id': {'$ne': user_id}
+        'sent_by_id': {'$ne': replied_user['user_id']},
+        'replies.sent_by_id': {'$ne': replied_user['user_id']}
     })
 
     if not not_yet_replied_tiktok:

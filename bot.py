@@ -25,7 +25,7 @@ dispatcher = updater.dispatcher
 
 COMMANDS = [
     ('start', 'посмотреть инструкцию'),
-    ('stats', 'посмотреть статистику по тиктокам (есть аргументы <code>"Имя" "DD.MM.YYY"</code>)'),
+    ('stats', 'посмотреть статистику по тиктокам (есть аргументы <code>"Имя" "DD.MM.YYYY"</code>)'),
     ('watch', 'получить самый ранний неотвеченный тикток'),
 ]
 
@@ -69,7 +69,7 @@ def reply_handler(user: dict, update: Update, context: CallbackContext) -> None:
     message = update.effective_message
 
     save_tiktok_reply_if_applicable(
-        user['user_id'], message.reply_to_message.message_id,
+        user, message.reply_to_message.message_id,
         message.message_id, message.date, message.text
     )
 
@@ -177,12 +177,10 @@ def form_stats_summary(users: list, start_date: Optional[datetime]) -> str:
             if user_outcome_replies_stats:
                 replied_count = user_outcome_replies_stats['replied_count']
 
-            tiktoks_word = tiktok_morph.make_agree_with_number(others_sent_count).word
-
             text += (
                 f"Ответил{'a' if user['gen'] == 'f' else ''} "
                 f"на <code>{replied_count}</code> "
-                f"из <code>{others_sent_count}</code> {tiktoks_word}, которые "
+                f"из <code>{others_sent_count}</code> тиктоков, которые "
                 f"получил{'a' if user['gen'] == 'f' else ''}. "
             )
 
@@ -263,12 +261,13 @@ def error_handler(update: Update, context: CallbackContext) -> None:
 
 
 tiktoks_handler = MessageHandler(
-    Filters.text & Filters.regex('.*vm.tiktok.com.*'),
+    Filters.text & Filters.regex('.*vm.tiktok.com.*') & ~Filters.update.edited_message,
     tiktok_handler
 )
 
 replies_handler = MessageHandler(
-    Filters.reply, reply_handler
+    Filters.reply & ~Filters.update.edited_message,
+    reply_handler
 )
 
 dispatcher.add_handler(CommandHandler('start', start))
