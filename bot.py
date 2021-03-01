@@ -1,13 +1,16 @@
 
 import os
+import re
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pymorphy2
 import telegram
-from telegram.ext import (CallbackContext, CommandHandler, Defaults, Filters,
-                          MessageHandler, Updater)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (CallbackContext, CallbackQueryHandler,
+                          CommandHandler, Defaults, Filters, MessageHandler,
+                          Updater)
 from telegram.update import Message, Update
 
 from db import (STRICT_MODE_START_FROM, db, get_income_replies_stats,
@@ -31,6 +34,7 @@ COMMANDS = [
     ('start', 'посмотреть инструкцию'),
     ('stats', 'посмотреть статистику по тиктокам (есть аргументы <code>"Имя" "DD.MM.YYYY"</code>)'),
     ('watch', 'получить самый ранний неотвеченный тикток'),
+    ('search', 'искать по ссылке'),
 ]
 
 success = updater.bot.set_my_commands(COMMANDS)
@@ -55,28 +59,34 @@ def tiktok_handler(user: dict, update: Update, context: CallbackContext) -> None
             text=f'Cannot get video_id of tiktok {video_url}\n\n{repr(e)}'
         )
 
-    saved_tiktok = save_sent_tiktok(
+    is_duplicate = send_is_duplicate_if_applicable(
+        chat_id, video_id, user, update, context
+    )
+
+    if is_duplicate:
+        return
+
+    save_sent_tiktok(
         user['user_id'], message.message_id,
         message.date, message.text, video_id
     )
+
     send_has_not_answered_if_applicable(chat_id, message, user, update, context)
     send_milestones_if_applicable(chat_id, user, update, context)
-    send_is_duplicate_if_applicable(chat_id, saved_tiktok, user, update, context)
 
 
-def send_is_duplicate_if_applicable(chat_id: int, saved_tiktok: dict, user: dict,
-                                    update: Update, context: CallbackContext) -> None:
-    video_id = saved_tiktok['video_id']
+def send_is_duplicate_if_applicable(chat_id: int, video_id: str, user: dict,
+                                    update: Update, context: CallbackContext) -> bool:
 
     if not video_id:
         return
 
     already_sent_tiktoks = get_tiktoks_with_same_video_id(
-        user['user_id'], saved_tiktok
+        user['user_id'], video_id
     )
 
     if not already_sent_tiktoks:
-        return
+        return False
 
     already_sent_tiktok = already_sent_tiktoks[0]
     sent_user = already_sent_tiktok['user']
@@ -84,8 +94,9 @@ def send_is_duplicate_if_applicable(chat_id: int, saved_tiktok: dict, user: dict
         chat_id=chat_id,
         text=(
             '🤔 Хмм... Кажется этот тикток уже присылали. '
-            f"{sent_user['name']} делала{'a' if user['gen'] == 'f' else ''} "
-            f"это {already_sent_tiktok['sent_at'].strftime('%d.%m.%Y')}"
+            f"{sent_user['name']} делал{'a' if user['gen'] == 'f' else ''} "
+            f"это {already_sent_tiktok['sent_at'].strftime('%d.%m.%Y')} (на дубликаты "
+            'можно не отвечать)'
         )
     )
 
@@ -103,6 +114,8 @@ def send_is_duplicate_if_applicable(chat_id: int, saved_tiktok: dict, user: dict
                 'Если нужно, поищите по дате.'
             )
         )
+
+    return True
 
 
 def send_has_not_answered_if_applicable(chat_id: int, message: Message, user: dict,
@@ -190,7 +203,7 @@ def stats(user: dict, update: Update, context: CallbackContext) -> None:
             found_user = None
 
             try:
-                found_user = next(u for u in all_users if u['name'] == arg.lower())
+                found_user = next(u for u in all_users if u['name'].lower() == arg.lower())
                 for_user_id = found_user['user_id']
                 continue
             except StopIteration:
@@ -309,16 +322,16 @@ def watch(user: dict, update: Update, context: CallbackContext) -> None:
 
     all_users = list(db.users.find({}).sort('name', 1))
 
-    watch_user_id = user['user_id']
+    watch_user = user
 
     if args := context.args:
         try:
-            found_user = next(u for u in all_users if u['name'] == args[0].lower())
-            watch_user_id = found_user
+            found_user = next(u for u in all_users if u['name'].lower() == args[0].lower())
+            watch_user = found_user
         except StopIteration:
             pass
 
-    not_answered_tiktok = get_last_not_answered_tiktok(watch_user_id)
+    not_answered_tiktok = get_last_not_answered_tiktok(watch_user['user_id'])
 
     if not_answered_tiktok:
         context.bot.send_message(
@@ -334,6 +347,101 @@ def watch(user: dict, update: Update, context: CallbackContext) -> None:
                 'Можно с чистой совестью идти смотреть новые тиктоки и скидывать друзьям 😊'
             )
         )
+
+
+@known_user
+def search(user: dict, update: Update, context: CallbackContext) -> None:
+    chat_id = update.effective_chat.id
+
+    if not context.args:
+        return
+
+    video_url = context.args[0]
+
+    if not (m := re.match(EXTRACT_SHARE_URL_FROM_TIKTOK, video_url)):
+        context.bot.send_message(
+            chat_id=chat_id,
+            text='Не похоже на ссылку на тикток. <code>/manage https://vm.tiktok.com/some_id/</code>'
+        )
+
+    video_url = m.group(1)
+
+    try:
+        video_id = get_tiktok_id_by_share_url(video_url)
+    except Exception as e:
+        context.bot.send_message(
+            chat_id=chat_id,
+            text='Ошибка в пробивке тиктока через сайт тиктока...'
+        )
+        context.bot.send_message(
+            chat_id=chat_id,
+            text=f'Cannot get video_id of tiktok {video_url}\n\n{repr(e)}'
+        )
+
+    tiktoks = get_tiktoks_with_same_video_id(
+        user['user_id'], video_id
+    )
+
+    text = 'Использования тиктока:\n'
+    reply_markup = None
+
+    if tiktoks:
+        for i, tiktok in enumerate(tiktoks, start=1):
+            text += f"{i}. {tiktok['user']['name']} — {tiktok['sent_at'].strftime('%d.%m.%Y')}\n"
+
+        reply_markup = InlineKeyboardMarkup.from_column([
+            InlineKeyboardButton(
+                text='🗑 Удалить последнее',
+                callback_data=f"search_delete_top__{tiktok['message_id']}"
+            ),
+            InlineKeyboardButton(text='Закрыть', callback_data='search_close'),
+        ])
+    else:
+        text = 'Этот тикток еще не присылался'
+
+    context.bot.send_message(chat_id, text, reply_markup=reply_markup)
+
+
+def callback(update: Update, context: CallbackContext) -> None:
+    update.callback_query.answer()
+    payload = update.callback_query.data
+    chat_id = update.effective_chat.id
+
+    if payload.startswith('search_delete_'):
+        payload = payload.removeprefix('search_delete_')
+        payload, message_id = payload.split('__')
+        found_tiktok = db.tiktoks.find_one({'message_id': int(message_id)})
+
+        if not found_tiktok:
+            context.bot.send_message(chat_id, 'Тикток для удаления не найден')
+            return
+
+        if payload == 'top':
+            additional_text = (
+                f"Последнее использование тиктока (от {found_tiktok['sent_at'].strftime('%d.%m.%Y')}) "
+                'будет удалено. Ок?'
+            )
+            reply_markup = InlineKeyboardMarkup.from_column([
+                InlineKeyboardButton(
+                    text='❌ Да, удалить',
+                    callback_data=f'search_delete_confirm__{message_id}'
+                ),
+                InlineKeyboardButton(text='Отмена', callback_data='search_close'),
+            ])
+        else:
+            reply_markup = None
+            db.tiktoks.delete_one({'message_id': int(message_id)})
+            additional_text = (
+                f"Использование тиктока от {found_tiktok['sent_at'].strftime('%d.%m.%Y')} "
+                'было удалено ✅'
+            )
+
+        update.callback_query.edit_message_text(
+            text=f'{update.effective_message.text}\n\n{additional_text}',
+            reply_markup=reply_markup
+        )
+    else:
+        update.callback_query.edit_message_reply_markup(reply_markup=None)
 
 
 def error_handler(update: Update, context: CallbackContext) -> None:
@@ -370,6 +478,8 @@ replies_handler = MessageHandler(
 dispatcher.add_handler(CommandHandler('start', start))
 dispatcher.add_handler(CommandHandler('stats', stats))
 dispatcher.add_handler(CommandHandler('watch', watch))
+dispatcher.add_handler(CommandHandler('search', search))
+dispatcher.add_handler(CallbackQueryHandler(callback))
 dispatcher.add_handler(tiktoks_handler)
 dispatcher.add_handler(replies_handler)
 dispatcher.add_error_handler(error_handler)

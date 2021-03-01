@@ -312,12 +312,11 @@ def get_today_sent_tiktoks_count(user_id: int) -> int:
     return db.tiktoks.count_documents(query)
 
 
-def get_tiktoks_with_same_video_id(user_id: int, tiktok: dict) -> int:
+def get_tiktoks_with_same_video_id(user_id: int, video_id: str) -> int:
     query = [
         {
             '$match': {
-                '_id': {'$ne': tiktok['_id']},
-                'video_id': tiktok['video_id']
+                'video_id': video_id
             }
         },
         {
