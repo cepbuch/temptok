@@ -34,10 +34,11 @@ def export_tiktoks(client: TelegramClient, channel: Channel) -> None:
         if message.reply_to_msg_id:
             replied_user = db.users.find_one({'user_id': user_id})
 
-            save_tiktok_reply_if_applicable(
-                replied_user, message.reply_to_msg_id,
-                message.id, message.date, message.text
-            )
+            if replied_user:
+                save_tiktok_reply_if_applicable(
+                    replied_user, message.reply_to_msg_id,
+                    message.id, message.date, message.text
+                )
 
 
 with TelegramClient('tg_session', os.environ['TG_API_ID'], os.environ['TG_API_HASH']) as client:

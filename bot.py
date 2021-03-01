@@ -112,18 +112,12 @@ def send_has_not_answered_if_applicable(chat_id: int, message: Message, user: di
     if not_answered_tiktok:
         context.bot.send_message(
             chat_id=chat_id,
-            reply_to_message_id=message.message_id,
+            reply_to_message_id=not_answered_tiktok['message_id'],
             text=(
-                f"{user['name']}, kind reminder о том, что у тебя есть неотвеченные тиктоки, но "
+                f"🤫 Kind reminder! {user['name']}, у тебя есть неотвеченные тиктоки, а "
                 'ты присылаешь новые. Ведь те тиктоки ценнее, чем в ленте: за тебя их уже отобрали '
-                'и возможно очень сильно ждут твоей реакции.\n\n'
-                'Вот самый ранний неотвеченный, пожалуйста, начни с него и просмотри внимательно все что поле:'
+                'и возможно очень сильно ждут твоей реакции.'
             )
-        )
-        context.bot.forward_message(
-            chat_id=chat_id,
-            from_chat_id=chat_id,
-            message_id=not_answered_tiktok['message_id']
         )
 
 
