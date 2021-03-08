@@ -80,7 +80,7 @@ def save_tiktok_reply_if_applicable(replied_user: dict, replied_to_message_id: i
     )
 
 
-def get_last_not_answered_tiktok(user_id: int, offset_from_now: Optional[timedelta] = None) -> Optional[dict]:
+def get_not_answered_tiktoks(user_id: int, offset_from_now: Optional[timedelta] = None) -> Optional[dict]:
     query = {
         'sent_by_id': {"$ne": user_id},
         'sent_at': {'$gte': STRICT_MODE_START_FROM},
@@ -89,12 +89,7 @@ def get_last_not_answered_tiktok(user_id: int, offset_from_now: Optional[timedel
     if offset_from_now:
         query['sent_at']['$lte'] = datetime.utcnow() - offset_from_now
 
-    not_answered_tiktok_list = list(db.tiktoks.find(query).sort('sent_at', 1).limit(1))
-
-    try:
-        return not_answered_tiktok_list[0]
-    except IndexError:
-        return None
+    return list(db.tiktoks.find(query).sort('sent_at', 1))
 
 
 def get_sent_tiktoks_stats(start_date: Optional[datetime] = None) -> dict:

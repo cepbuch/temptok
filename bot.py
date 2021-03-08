@@ -14,11 +14,10 @@ from telegram.ext import (CallbackContext, CallbackQueryHandler,
 from telegram.update import Message, Update
 
 from db import (STRICT_MODE_START_FROM, db, get_income_replies_stats,
-                get_last_not_answered_tiktok,
-                get_outcome_replies_tiktoks_stats, get_sent_tiktoks_stats,
-                get_tiktoks_with_same_video_id, get_today_sent_tiktoks_count,
-                get_top_most_popular_reactions, save_sent_tiktok,
-                save_tiktok_reply_if_applicable)
+                get_not_answered_tiktoks, get_outcome_replies_tiktoks_stats,
+                get_sent_tiktoks_stats, get_tiktoks_with_same_video_id,
+                get_today_sent_tiktoks_count, get_top_most_popular_reactions,
+                save_sent_tiktok, save_tiktok_reply_if_applicable)
 from security import known_user
 from tiktok import EXTRACT_SHARE_URL_FROM_TIKTOK, get_tiktok_id_by_share_url
 from tiktok_utils import milliseconds_to_string_duration
@@ -120,12 +119,12 @@ def send_is_duplicate_if_applicable(chat_id: int, video_id: str, user: dict,
 
 def send_has_not_answered_if_applicable(chat_id: int, message: Message, user: dict,
                                         update: Update, context: CallbackContext) -> None:
-    not_answered_tiktok = get_last_not_answered_tiktok(user['user_id'], offset_from_now=timedelta(hours=1))
+    not_answered_tiktoks = get_not_answered_tiktoks(user['user_id'], offset_from_now=timedelta(hours=1))
 
-    if not_answered_tiktok:
+    if not_answered_tiktoks:
         context.bot.send_message(
             chat_id=chat_id,
-            reply_to_message_id=not_answered_tiktok['message_id'],
+            reply_to_message_id=not_answered_tiktoks[0]['message_id'],
             text=(
                 f"🤫 Kind reminder! {user['name']}, у тебя есть неотвеченные тиктоки, а "
                 'ты присылаешь новые. Ведь те тиктоки ценнее, чем в ленте: за тебя их уже отобрали '
@@ -331,13 +330,16 @@ def watch(user: dict, update: Update, context: CallbackContext) -> None:
         except StopIteration:
             pass
 
-    not_answered_tiktok = get_last_not_answered_tiktok(watch_user['user_id'])
+    not_answered_tiktoks = get_not_answered_tiktoks(watch_user['user_id'])
 
-    if not_answered_tiktok:
+    if not_answered_tiktoks:
+        tiktoks_count = len(not_answered_tiktoks)
+        tiktok_morph = morph.parse('тикток')[0].make_agree_with_number(tiktoks_count).word
+
         context.bot.send_message(
             chat_id=chat_id,
-            text='Here you go!',
-            reply_to_message_id=not_answered_tiktok['message_id']
+            text=f'У тебя {tiktoks_count} {tiktok_morph} к просмотру, начиная с этого 👆',
+            reply_to_message_id=not_answered_tiktoks[0]['message_id']
         )
     else:
         context.bot.send_message(
