@@ -8,6 +8,7 @@ from typing import Optional
 import pymorphy2
 import telegram
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.error import BadRequest
 from telegram.ext import (CallbackContext, CallbackQueryHandler,
                           CommandHandler, Defaults, Filters, MessageHandler,
                           Updater)
@@ -336,11 +337,21 @@ def watch(user: dict, update: Update, context: CallbackContext) -> None:
         tiktoks_count = len(not_answered_tiktoks)
         tiktok_morph = morph.parse('тикток')[0].make_agree_with_number(tiktoks_count).word
 
-        context.bot.send_message(
-            chat_id=chat_id,
-            text=f'У тебя {tiktoks_count} {tiktok_morph} к просмотру, начиная с этого 👆',
-            reply_to_message_id=not_answered_tiktoks[0]['message_id']
-        )
+        try:
+            context.bot.send_message(
+                chat_id=chat_id,
+                text=f'У тебя {tiktoks_count} {tiktok_morph} к просмотру, начиная с этого 👆',
+                reply_to_message_id=not_answered_tiktoks[0]['message_id']
+            )
+        except BadRequest:
+            context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    'Невозможно послать тикток, потому что его удалили. '
+                    'Я, конечно, знаю ссылку, но раз его удалили, то я тоже его удалю... ',
+                )
+            )
+            db.tiktoks.delete_one({'message_id': int(not_answered_tiktoks[0]['message_id'])})
     else:
         context.bot.send_message(
             chat_id=chat_id,
@@ -449,8 +460,8 @@ def callback(update: Update, context: CallbackContext) -> None:
 def error_handler(update: Update, context: CallbackContext) -> None:
     try:
         raise context.error
-    except Exception as e:
-        exc_str = traceback.format_exc(e)
+    except Exception:
+        exc_str = traceback.format_exc()
         try:
             context.bot.send_message(
                 chat_id=26187519,
